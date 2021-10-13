@@ -1,0 +1,429 @@
+//-------------------------------------------------------------------------------
+// Introduce assets
+//-------------------------------------------------------------------------------
+
+var buffer3m = ee.FeatureCollection("users/emilydeardorff/LakeWhatcomProject/buffer_depth3m"),
+    buffer4m = ee.FeatureCollection("users/emilydeardorff/LakeWhatcomProject/buffer_depth4m"),
+    buffer5m = ee.FeatureCollection("users/emilydeardorff/LakeWhatcomProject/buffer_depth5m"),
+    buffer6m = ee.FeatureCollection("users/emilydeardorff/LakeWhatcomProject/buffer_depth6m"),
+    buffer7m = ee.FeatureCollection("users/emilydeardorff/LakeWhatcomProject/buffer_depth7m"),
+    whatcom = ee.FeatureCollection("users/emilydeardorff/LakeWhatcomProject/whatcom");
+
+
+//Create a large-scale ROI
+var ROI = ee.Geometry.Point([-122.3281, 48.7331]);
+
+//Input sample sites
+var radius = 50;
+
+var Site_1 = ee.Feature(ee.Geometry.Point([-122.411, 48.760]).buffer(radius), {"name": "Site_1","alias": "11"});
+var Site_2 = ee.Feature(ee.Geometry.Point([-122.382, 48.743]).buffer(radius), {"name": "Site_2","alias": "22"});
+var Site_3 = ee.Feature(ee.Geometry.Point([-122.336, 48.738]).buffer(radius), {"name": "Site_3","alias": "31"});
+var Site_4 = ee.Feature(ee.Geometry.Point([-122.304, 48.695]).buffer(radius), {"name": "Site_4","alias": "32"});
+
+var sites = [Site_1, Site_2, Site_3, Site_4]; 
+
+//Create a FeatureCollection from the list 
+var points = ee.FeatureCollection(sites); 
+
+
+
+//-------------------------------------------------------------------------------
+// Set date range
+//-------------------------------------------------------------------------------
+
+var startDate = '2014-11-01'; //yyyy-mm-dd
+var endDate = '2014-11-28'; //yyyy-mm-dd
+
+var date = 'Aug32015';
+
+// November bloom date: 2017-11-09 and 2017-11-12 (actually occured on november 11th, 2017)
+//8/7/2014: clear day, no bloom, all about 2 or 3
+//6/7/2015: clear day, no bloom
+//7/9/2015
+//7/9/2015
+//8/1/2015 
+//8/12/2016
+//7/5/2017
+//7/14/2017
+//7/30/2017
+//5/5/2018
+//8/9/2018
+
+// 2013-7-11: hazy, bloom not visible
+
+//2015-8-3: hazy, bloom not visible
+
+//2013-11-13 and 2013-11-28 clear day, visible bloom (on 2013-11-24)
+
+//'2020-04-01';   endDate = '2020-04-15 // may, no bloom 
+
+
+
+// ----------------------------------------------------------------------------
+// Cloud Mask Function
+// ----------------------------------------------------------------------------
+
+function maskL8sr(image) {
+  // Bits 3 and 5 are cloud shadow and cloud, respectively.
+  var cloudShadowBitMask = (1 << 3);
+  var cloudsBitMask = (1 << 5);
+  // Get the pixel QA band.
+  var qa = image.select('pixel_qa');
+  // Both flags should be set to zero, indicating clear conditions.
+  var mask = qa.bitwiseAnd(cloudShadowBitMask).eq(0)
+                 .and(qa.bitwiseAnd(cloudsBitMask).eq(0));
+  return image.updateMask(mask);
+}
+
+
+//----------------------------------------------------------------------
+// Prepare dataset
+//----------------------------------------------------------------------
+
+
+//Select by date a pre-determined Landsat 8 image to analyze
+var collection_unmasked = ee.ImageCollection('LANDSAT/LC08/C01/T1_SR')
+  //filter start and end date
+  .filterDate(startDate, endDate)
+  
+  //filter according to drawn boundary
+  .filterBounds(ROI)
+  
+  //select the first 7 bands
+  .select(['B[1-7]']);
+
+
+//Create a mosaic image  
+var image_unmasked = collection_unmasked.mosaic();
+
+//Select by date a pre-determined Landsat 8 image to analyze
+var collection = ee.ImageCollection('LANDSAT/LC08/C01/T1_SR')
+  //filter start and end date
+  .filterDate(startDate, endDate)
+  
+  //mask out clouds
+  .map(maskL8sr)
+  
+  //filter according to drawn boundary
+  .filterBounds(ROI)
+  
+  //select the first 7 bands
+  .select(['B[1-7]']);
+
+
+//Create a mosaic image  
+var image = collection.mosaic();
+
+//----------------------------------------------------------------------
+// Calculate chlorophyll with indices
+//----------------------------------------------------------------------
+
+  //Chl via NDVI
+  var chl_NDVI = image.expression(
+    'e ** (0.93 - 1.9 * ((B5 - B4) / (B5 + B4)))', {
+      'B5': image.select('B5'),
+      'B4': image.select('B4'),
+      'e' : 2.71828
+    });
+
+
+  //Chl via I2BDA
+  var chl_I2BDA = image.expression(
+    'e ** (1.7 - 0.71 * (B5 / B4))', {
+      'B5': image.select('B5'),
+      'B4': image.select('B4'),
+      'e' : 2.71828
+    });
+
+
+  //Chl via SABI
+  var chl_SABI = image.expression(
+    'e ** (0.97 - 2.7 * ((B5 - B4) / (B2 + B3)))', {
+      'B5': image.select('B5'),
+      'B4': image.select('B4'),
+      'B3': image.select('B3'),
+      'B2': image.select('B2'),
+      'e' : 2.71828
+    });
+
+
+
+
+//----------------------------------------------------------------------
+// Set raster parameters
+//----------------------------------------------------------------------
+  var rgbParams = {bands: ['B4', 'B3', 'B2'], gain: 0.2, gamma: 1};
+  
+  var min = 0;
+  var max = 6;
+  
+//----------------------------------------------------------------------
+// Create functions and run starter functions
+//----------------------------------------------------------------------
+
+// CREATE FUNCTION: Set basemap.
+var FUNbase = function() {
+  
+  // Center the map on Lake Whatcom
+  Map.setCenter(-122.3281, 48.7331, 11);
+
+  // Set gray basemap
+  var GRAYMAP = [{stylers: [ { saturation: -200 } ]},
+  {elementType: 'labels', stylers: [ { lightness: 20 } ]},
+  {featureType: 'road', elementType: 'geometry', stylers: [ { visibility: 'simplified' } ]},
+  {featureType: 'road', elementType: 'labels',stylers: [ { visibility: 'off' } ]},
+  {elementType: 'labels.icon', stylers: [ { visibility: 'off' } ]},
+  {featureType: 'poi', elementType: 'all', stylers: [ { visibility: 'off' }]}
+  ];
+
+  Map.setOptions('Gray', {'Gray': GRAYMAP});
+  
+  // Make blank basemap
+  var BLANKMAP = [{stylers: [ { visibility: 'off' } ]},
+  {elementType: 'labels', stylers: [ { visibility: 'off' } ]},
+  {featureType: 'road', elementType: 'geometry', stylers: [ { visibility: 'off' } ]},
+  {featureType: 'road', elementType: 'labels',stylers: [ { visibility: 'off' } ]},
+  {elementType: 'labels.icon', stylers: [ { visibility: 'off' } ]},
+  {featureType: 'poi', elementType: 'all', stylers: [ { visibility: 'off' }]}
+  ];
+
+  ///Map.setOptions('Blank', {'Gray': BLANKMAP});
+  
+  //Add unmasked RGB image on map (not displayed)
+  Map.addLayer(image_unmasked, rgbParams, 'RGB, without cloud mask', false); 
+  
+  
+  //Display RGB image on map
+  Map.addLayer(image, rgbParams, 'RGB, with cloud mask');
+
+  //Display Lake Whatcom outline on map
+  Map.addLayer(whatcom, {color: 'ffffff'}, 'Lake Whatcom', false);
+  
+  //Display Lake Whatcom tribs on map
+  Map.addLayer(LW_Tribs, {color: '93a7c7'}, 'Tributaries', false);
+
+
+};
+
+FUNbase();
+
+// CREATE FUNCTION: Create legend for bottom right of map
+var FUNleg = function(pal) {   // add legend to map
+
+  // set position of panel
+  var legend = ui.Panel({
+    style: {position: 'bottom-left',
+    padding: '8px 15px'}
+  });
+   
+  // Create legend title
+  var legendTitle = ui.Label({
+    value: 'Predicted Chlorophyll',
+    style: {
+      fontWeight: 'bold',
+      fontSize: '18px',
+      margin: '0 0 4px 0',
+      padding: '0'
+      }
+  });
+  
+  // Create subtitle
+  var subTitle = ui.Label({
+    value: '(ug/L)',
+    style: {
+      fontWeight: 'bold',
+      fontSize: '14px',
+      margin: '0 0 4px 0',
+      padding: '0'
+      }
+  });
+   
+  // Add the titles to the panel
+  legend.add(legendTitle);
+  
+  legend.add(subTitle);
+
+  // Set Vis Params
+  var viz = {min: min, max: max, palette: pal};
+  
+  // Create Legend Image
+  var lon = ee.Image.pixelLonLat().select('latitude');
+  var gradient = lon.multiply((viz.max-viz.min)/100.0).add(viz.min);
+  var legendImage = gradient.visualize(viz);
+  
+  var panel = ui.Panel({ //'Max' Label
+  
+      widgets: [
+        ui.Label(viz['max'])
+      ],});
+  legend.add(panel);
+  
+  // Create color bar from the image
+  var thumbnail = ui.Thumbnail({
+    image: legendImage, 
+    params: {bbox:'0,0,10,100', dimensions:'20x100'},  
+    style: {padding: '1px', position: 'bottom-center'}
+  });
+  
+  // add the color bar to the legend
+  legend.add(thumbnail);
+  
+  var panel = ui.Panel({ //'Min' Label
+      widgets: [
+        ui.Label(viz['min'])
+      ],});
+  
+  legend.add(panel);
+  
+  Map.add(legend);
+
+}; 
+
+// CREATE FUNCTION: Export rasters to console
+var FUNrast_export = function () {
+  
+    Export.image.toDrive({
+    image: image,
+    description: 'RBG_'.concat(date),
+    scale: 30,
+    region: whatcom
+  });
+  
+  Export.image.toDrive({
+    image: chl_NDVI.clip(whatcom),
+    description: 'NDVI_'.concat(date),
+    scale: 30,
+    region: whatcom
+  });
+  
+  Export.image.toDrive({
+    image: chl_SABI.clip(whatcom),
+    description: 'SABI_'.concat(date),
+    scale: 30,
+    region: whatcom
+  });
+  
+  Export.image.toDrive({
+    image: chl_I2BDA.clip(whatcom),
+    description: 'I2BDA_'.concat(date),
+    scale: 30,
+    region: whatcom
+  });
+};
+
+// CREATE FUNCTION: Apply palette, display raster
+var FUNrast = function(pal) {
+  
+  //Set visualization params
+  var params = {min: min, max: max, palette: pal};
+  //Display chlorophyll values calculated for Lake Whatcom on a selected scale
+    Map.addLayer(chl_NDVI.clip(whatcom), params, 'Chl via NDVI');
+    Map.addLayer(chl_I2BDA.clip(whatcom), params, 'Chl via 2BDA');
+    Map.addLayer(chl_SABI.clip(whatcom), params, 'Chl via SABI');
+  //Display sample sites on map
+    Map.addLayer(points, {color: '000000'}, 'IWS Sampling Sites');
+    
+  //Add legend
+  FUNleg(pal);
+
+};
+
+// CREATE FUNCTION: Apply perimeter mask
+var FUNbuffer = function (bufferDepth) {
+  Map.addLayer(bufferDepth, {color: 'ffffff'}, 'buffer');
+};
+
+// CREATE FUNCTION: Load interative UI
+var FUNinterface = function() {
+  var depths  = {
+    '3 meters': buffer3m,
+    '4 meters': buffer4m,
+    '5 meters': buffer5m,
+    '6 meters': buffer6m,
+    '7 meters': buffer7m
+  };
+  
+  var color_pal = {
+    'blue_magenta': ['648FFF', '785EF0', 'DC267F', 'FE6100', 'FFB000'], //blue to magenta
+    'blue_green': ['36197f', '21548d', '1a7209', 'a4cc3c'], //blue to green
+    'rainbow': ['ee82ee', '4b0082', '0000ff', '008000', 'ffff00', 'ffa500', 'ff0000'] //bright rainbow
+  };
+  
+  // Create select function for buffer depths
+  var selectDep = ui.Select({
+    items: Object.keys(depths),
+    onChange: function(key) {
+      var bufferDepth = depths[key];
+      FUNbuffer(bufferDepth);
+  }
+  });
+  
+  // Create select function for colors
+  var select = ui.Select({
+    items: Object.keys(color_pal),
+    onChange: function(key) {
+      var pal = color_pal[key];
+      FUNrast(pal);
+  }
+  });
+  
+  // Create a raster color place holder 
+  select.setPlaceholder('Choose a raster color scheme...');
+  
+  // Create a buffer depth place holder 
+  selectDep.setPlaceholder('Choose a buffer depth...');
+  
+  // Create a panel to hold your hopes and dreams
+  var panel = ui.Panel();
+  panel.style().set({
+    width: '400px',
+    height: '250px',
+    position: 'bottom-right',
+    stretch: 'vertical'
+  });
+  Map.add(panel);
+  
+  // Create 'export' button
+  var exportr = ui.Button({
+    label: 'Export Rasters',
+    onClick: function() {
+      FUNrast_export();
+    }
+  });
+  
+  // Create 'reset' button
+  var reset = ui.Button({
+    label: 'Reset Map',
+    onClick: function() {
+      Map.clear();
+      FUNreset();
+    }
+  });
+  
+  // Create title
+  var lab1 = ui.Label('Select a color scheme to display chlorophyll data:');
+  
+  var lab2 = ui.Label('Select a buffer depth to display a shallow-water buffer:');
+
+
+
+  // Print the place holders
+  panel.add(lab1);
+  panel.add(select);
+  
+  panel.add(lab2);
+  panel.add(selectDep);
+  
+  panel.add(exportr);
+  panel.add(reset);
+
+};
+
+// CREATE FUNCTION: Reset map
+var FUNreset = function() {
+  FUNbase();
+  FUNinterface();
+};
+
+FUNinterface();
